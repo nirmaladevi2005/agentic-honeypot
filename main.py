@@ -1,88 +1,37 @@
-from fastapi import FastAPI, Header, Request
-from datetime import datetime
-import re
+from fastapi import FastAPI, Header, HTTPException
+from pydantic import BaseModel
+from typing import Optional
 
-app = FastAPI(title="Agentic Honeypot", version="1.0")
+app = FastAPI()
 
-# -------------------------
-# Memory
-# -------------------------
-attack_logs = []
-sessions = {}
+# ---------- CONFIG ----------
+API_KEY = "test123"
 
-# -------------------------
-# Root
-# -------------------------
+# ---------- REQUEST MODEL ----------
+class ChatRequest(BaseModel):
+    message: Optional[str] = None
+
+# ---------- ROOT ----------
 @app.get("/")
 def root():
-    return {"status": "running"}
+    return {"status": "Agentic Honeypot running"}
 
-# -------------------------
-# Fake Login
-# -------------------------
-@app.post("/login")
-async def fake_login(request: Request):
-    data = await request.json()
-    attack_logs.append({
-        "username": data.get("username"),
-        "password": data.get("password"),
-        "time": datetime.utcnow().isoformat()
-    })
-    return {"message": "Login failed"}
-
-# -------------------------
-# Logs
-# -------------------------
-@app.get("/attack-logs")
-def logs():
-    return attack_logs
-
-# -------------------------
-# 🚨 TESTER-SAFE AGENT ENDPOINT
-# -------------------------
-@app.api_route("/agent-chat/{session_id}", methods=["GET", "POST"])
-async def agent_chat(
+# ---------- MAIN ENDPOINT ----------
+@app.post("/agent-chat/{session_id}")
+def agent_chat(
     session_id: str,
-    request: Request,
-    x_api_key: str = Header(...)
+    data: Optional[ChatRequest] = None,
+    x_api_key: str = Header(None)
 ):
-    # API key check
-    if x_api_key.strip() != "test123":
-        return {"error": "Invalid API key"}
+    # API key validation
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
-    # Session init
-    if session_id not in sessions:
-        sessions[session_id] = {
-            "turns": 0,
-            "summary": ""
-        }
-
-    sessions[session_id]["turns"] += 1
-
-    # Safely read body ONLY if it exists
-    try:
-        body = await request.json()
-        message = body.get("message", "")
-    except Exception:
-        message = ""
-
-    # Simple agent intelligence
-    upi_ids = re.findall(r'\b[\w.-]+@upi\b', message)
-    links = re.findall(r'https?://\S+', message)
-
-    scam = bool(upi_ids or links)
-    threat = "HIGH" if scam else "LOW"
-
-    sessions[session_id]["summary"] += f" Turn{sessions[session_id]['turns']}:{threat}"
+    # If no body sent (API tester case)
+    user_message = data.message if data and data.message else "No message provided"
 
     return {
         "session_id": session_id,
-        "turns": sessions[session_id]["turns"],
-        "threat_level": threat,
-        "scam_detected": scam,
-        "extracted": {
-            "upi_ids": upi_ids,
-            "links": links
-        },
-        "agent_reply": "Adaptive monitoring active"
+        "received_message": user_message,
+        "honeypot_response": "Request logged successfully"
     }
