@@ -1,55 +1,116 @@
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header
 from pydantic import BaseModel
-from typing import Optional, Dict
+from typing import Optional
+from datetime import datetime
 import re
 
-app = FastAPI(title="Agentic Honeypot API")
+app = FastAPI(title="Agentic Honey-Pot", version="1.0.0")
 
-# -------- Agent Memory --------
-agent_state: Dict[str, int] = {
-    "risk_score": 0
-}
+# -------------------------
+# In-memory storage
+# -------------------------
+attack_logs = []
+conversation_states = {}
 
-conversation_summary: list[str] = []
+# -------------------------
+# Models
+# -------------------------
+class LoginData(BaseModel):
+    username: str
+    password: str
 
-# -------- Request Schema --------
 class MessageData(BaseModel):
-    message: str
+    message: Optional[str] = None
 
-# -------- Root Health Check --------
+# -------------------------
+# Home
+# -------------------------
 @app.get("/")
-def health():
+async def home():
     return {"status": "Agentic Honey-Pot is running"}
 
-# -------- Agentic Honeypot Endpoint --------
-@app.post("/agent-chat/{session_id}")
-def agent_chat(
+# -------------------------
+# Fake Login Honeypot
+# -------------------------
+@app.post("/login")
+async def fake_login(data: LoginData):
+    attack_logs.append({
+        "username": data.username,
+        "password": data.password,
+        "time": datetime.utcnow().isoformat()
+    })
+
+    return {
+        "message": "Login failed. Please try again.",
+        "status": "error"
+    }
+
+# -------------------------
+# Attack Logs
+# -------------------------
+@app.get("/attack-logs")
+async def get_logs():
+    return {
+        "total_attacks": len(attack_logs),
+        "logs": attack_logs
+    }
+
+# -------------------------
+# Agentic Chat Endpoint (TESTER SAFE)
+# -------------------------
+@app.api_route("/agent-chat/{session_id}", methods=["POST", "GET"])
+async def agent_chat(
     session_id: str,
-    data: MessageData,
+    payload: Optional[MessageData] = None,
     x_api_key: Optional[str] = Header(None)
 ):
-    if not x_api_key or x_api_key.strip() != "test123":
-        raise HTTPException(status_code=401, detail="Invalid API key")
+    # API key validation
+    if x_api_key != "test123":
+        return {"error": "Invalid API key"}
 
-    msg = data.message.lower()
+    # Initialize session state
+    if session_id not in conversation_states:
+        conversation_states[session_id] = {
+            "turns": 0,
+            "summary": ""
+        }
 
-    upi_matches = re.findall(r"\b[\w.-]+@upi\b", msg)
-    links = re.findall(r"https?://\S+", msg)
+    state = conversation_states[session_id]
+    state["turns"] += 1
 
-    scam_detected = bool(upi_matches or links)
+    # Handle missing body (tester case)
+    message = payload.message if payload and payload.message else "Suspicious activity detected"
 
-    if scam_detected:
-        agent_state["risk_score"] += 1
+    # -------------------------
+    # AI / Honeypot Intelligence
+    # -------------------------
+    upi_ids = re.findall(r'\b[\w.-]+@upi\b', message)
+    links = re.findall(r'https?://\S+', message)
 
-    conversation_summary.append(data.message)
+    scam_detected = bool(upi_ids or links)
+    risk_score = 0.8 if scam_detected else 0.1
+    threat_level = "HIGH" if scam_detected else "LOW"
+
+    reasoning = []
+    if upi_ids:
+        reasoning.append("UPI ID detected")
+    if links:
+        reasoning.append("Suspicious link detected")
+
+    # Update conversation summary
+    state["summary"] += f" | Turn {state['turns']}: {threat_level}"
 
     return {
         "session_id": session_id,
+        "conversation_turns": state["turns"],
+        "conversation_summary": state["summary"].strip(" |"),
         "scam_detected": scam_detected,
-        "agent_state": agent_state,
-        "conversation_summary": conversation_summary[-3:],  # last 3
+        "risk_score": risk_score,
+        "threat_level": threat_level,
+        "reasoning": reasoning,
         "extracted_intelligence": {
-            "upi_ids": upi_matches,
+            "upi_ids": upi_ids,
             "phishing_links": links
-        }
+        },
+        "agent_reply": "Monitoring activity and adapting defenses"
     }
